@@ -12,7 +12,7 @@ CLASES_GESTOS = [
     'n','o','p','q','r','s','t','u','v','w','x','y','z'
 ]
 CLASES_EMOCIONES = [
-    'enojo 😡','disgusto 😐','miedo 😱','felicidad 😁','neutro 🤨','tristeza 😥','sorpresa 😧'
+    'enojo >:(','disgusto','miedo','felicidad :D','neutro :/','tristeza :-(','sorpresa D:'
 ]
 
 # Otras configuraciones
