@@ -287,9 +287,9 @@ def dibujar_borde(image, brect):
 
 def mostrar_info(image, number):
     #Mostrar mensajes en pantalla
-    cv.putText(image, "Recoleccion de datos", (10, 30), cv.FONT_HERSHEY_SIMPLEX,0.8, (0, 0, 0), 2, cv.LINE_AA)
-    cv.putText(image, "Valor: " + str(number), (10, 60), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2, cv.LINE_AA)
-    cv.putText(image, "Salir (ESC)", (10, 90), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2, cv.LINE_AA)
+    cv.putText(image, "Gesture collector", (10, 30), cv.FONT_HERSHEY_SIMPLEX,0.8, (0, 0, 0), 2, cv.LINE_AA)
+    cv.putText(image, "MapKey: " + str(number), (10, 60), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2, cv.LINE_AA)
+    cv.putText(image, "Salir (Escape Key)", (10, 90), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2, cv.LINE_AA)
     return image
 
 
