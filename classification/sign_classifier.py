@@ -1,14 +1,14 @@
 # classification/sign_classifier.py
 import numpy as np
 # from tensorflow.keras.models import load_model  # Dependiendo de tu implementación
-from Modelos.signClassifier import signClassifier as SignModel  # Suponiendo tu signClassifier original
-from config import CLASES_GESTOS
+
+from config import CLASES_GESTOS, SIGN_PRO_MODEL
 import copy
 import itertools
 import tensorflow as tf
 
 class SignClassifier:
-    def __init__(self, path_modelo='Modelos/Sign_classifier_V2.tflite', num_threads=1):
+    def __init__(self, path_modelo=SIGN_PRO_MODEL, num_threads=1):
 
         # Crear un intérprete TensorFlow Lite con el modelo especificado
         self.interprete = tf.lite.Interpreter(model_path=path_modelo, num_threads=num_threads)
