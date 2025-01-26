@@ -22,3 +22,19 @@ class HandDetector:
         rgb_frame.flags.writeable = False
         results = self.hands.process(rgb_frame)
         return results
+
+    def get_landmark_list(self, image, hand_landmarks):
+        """
+        Devuelve la lista de (x, y) para cada landmark de la mano, en píxeles enteros.
+        'image' es el frame BGR de OpenCV.
+        'hand_landmarks' es el objeto devuelto por MediaPipe (results.multi_hand_landmarks).
+        """
+        image_width, image_height = image.shape[1], image.shape[0]
+        landmark_point = []
+        
+        for _, landmark in enumerate(hand_landmarks.landmark):
+            landmark_x = min(int(landmark.x * image_width), image_width - 1)
+            landmark_y = min(int(landmark.y * image_height), image_height - 1)
+            landmark_point.append([landmark_x, landmark_y])
+
+        return landmark_point

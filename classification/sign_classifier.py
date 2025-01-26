@@ -5,11 +5,38 @@ from Modelos.signClassifier import signClassifier as SignModel  # Suponiendo tu 
 from config import CLASES_GESTOS
 import copy
 import itertools
+import tensorflow as tf
 
 class SignClassifier:
-    def __init__(self):
-        # Carga de tu modelo (o clase) de gestos
-        self.model = SignModel()
+    def __init__(self, path_modelo='Modelos/Sign_classifier_V2.tflite', num_threads=1):
+
+        # Crear un intérprete TensorFlow Lite con el modelo especificado
+        self.interprete = tf.lite.Interpreter(model_path=path_modelo, num_threads=num_threads)
+        # Asignar memoria para el intérprete
+        self.interprete.allocate_tensors()
+        # modelo
+        
+        # Obtener detalles de entrada y salida del intérprete
+        self.entrada_detalles = self.interprete.get_input_details()
+        self.salida_detalles = self.interprete.get_output_details()
+
+    # El __call__ es un método especial que permite llamar a la instancia como si fuera una función
+    def __call__(self, landmark):
+        # Método para realizar inferencias con el modelo
+        # Obtener el índice del tensor de entrada
+        input_details_tensor_index = self.entrada_detalles[0]['index']
+        # Establecer el tensor en el intérprete con los datos de "landmark"
+        self.interprete.set_tensor(input_details_tensor_index, np.array([landmark], dtype=np.float32))
+        # Realizar la clasificacion
+        self.interprete.invoke()
+        # Obtener el resultado del tensor de salida
+        output_details_tensor_index = self.salida_detalles[0]['index']
+        result = self.interprete.get_tensor(output_details_tensor_index)
+        # Procesar el resultado y devolver el índice del resultado más alto
+        result_index = np.argmax(np.squeeze(result))
+        return (result_index,result[0][result_index])
+
+
 
     def preprocess_landmarks(self, landmark_list):
         """
@@ -53,7 +80,7 @@ class SignClassifier:
         """
         Toma la lista procesada (normalizada) y retorna (index_clase, probabilidad).
         """
-        index, precision = self.model(processed_landmarks)
+        index, precision = self(processed_landmarks)
         return index, precision
 
     def get_class_label(self, index):

@@ -1,410 +1,127 @@
-#Gestos de manos
-import copy
-import itertools
+# main.py
 import cv2 as cv
 import numpy as np
-import mediapipe as mp
-import Modelos.signClassifier as sclass
-#Emociones
-from tensorflow.keras.applications.imagenet_utils import preprocess_input
-from tensorflow.keras.preprocessing.image import img_to_array
-from tensorflow.keras.models import load_model
-import imutils
-
-#Tensorflow
 import tensorflow as tf
 
-#Use gpu for ts
-gpus = tf.config.experimental.list_physical_devices('GPU')
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        print("GPU habilitada correctamente.")
-    except RuntimeError as e:
-        print("Error al configurar la GPU:", e)
-else:
-    print("No se detecto GPU compatible, usando CPU.")
+# Importamos nuestros módulos personalizados
+from detection.face_detection import FaceDetector
+from detection.hand_detection import HandDetector
+from classification.sign_classifier import SignClassifier
+from classification.emotion_classifier import EmotionClassifier
 
-
-
-#Gestos de manos
-gestosModel = sclass.signClassifier() #Modelo de clasificacion de gestos de manos v2
-#Emociones
-emocionesModel = load_model("Modelos/modelo_emociones06.h5")
-#Modelo deteccion de caras
-estructura = r"Modelos/deploy.prototxt"
-pesos = r"Modelos/res10_300x300_ssd_iter_140000.caffemodel"
-faceNet = cv.dnn.readNet(estructura, pesos)#Modelo de deteccion de caras
-#Modelo de deteccion de puntos clave de manos
-hands = mp.solutions.hands.Hands(
-    max_num_hands=2,#Solo detecta una mano
-    min_detection_confidence=0.5,#Confianza minima para detectar una mano
-    min_tracking_confidence=0.5,#Confianza minima para seguir una mano
+# Funciones de dibujo (dibujar bounding boxes, texto, etc.)
+from utils.drawing_utils import (
+    draw_face_box,
+    draw_text,
+    draw_hand_landmarks,
+    draw_hand_info
 )
 
-#Clases de los modelos
-CLASES_GESTOS=['space','a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u', 'v','w','x','y','z']
-CLASES_EMOCIONES= ['enojo','disgusto','miedo','felicidad','neutro','tristeza','sorpresa']
+# Si tienes otras configuraciones globales (rutas, clases, etc.)
+from config import (
+    MIN_DETECTION_CONFIDENCE,
+    MIN_TRACKING_CONFIDENCE
+)
 
 def main():
-    cam = cv.VideoCapture(0)#Camara de computadora
-    while(True):
-        #Terminacion del programa
-        key = cv.waitKey(10)#Espera 10 milisegundos por tecla presionada
-        if key == 27:  # tecla ESC, salir
-            break
-        ret, image = cam.read()#Obtener imagen de la camara
-        if not ret:#Si no se obtiene imagen, salir
+    """
+    Punto de entrada principal del proyecto.
+    """
+    # 1) Configurar (opcional) uso de GPU para TensorFlow
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            print("GPU habilitada correctamente.")
+        except RuntimeError as e:
+            print("Error al configurar la GPU:", e)
+    else:
+        print("No se detectó GPU compatible, usando CPU.")
+
+    # 2) Inicializar detectores y clasificadores
+    face_detector = FaceDetector(confidence_threshold=0.5)  # Para SSD de rostros
+    hand_detector = HandDetector(
+        max_num_hands=2,
+        min_detection_confidence=MIN_DETECTION_CONFIDENCE,
+        min_tracking_confidence=MIN_TRACKING_CONFIDENCE
+    )
+    sign_classifier = SignClassifier()          # Para clasificar señas
+    emotion_classifier = EmotionClassifier()    # Para clasificar emociones
+
+    # 3) Iniciar la captura de video
+    cap = cv.VideoCapture(0)
+    if not cap.isOpened():
+        print("No se pudo abrir la cámara.")
+        return
+
+    while True:
+        # 4) Leer frame de la cámara
+        ret, frame = cap.read()
+        if not ret:
+            print("No se obtuvo frame de la cámara.")
             break
 
-        #Tratamiento de imagen
-        image = cv.flip(image, 1) # Voltear imagen
-        debug_image = copy.deepcopy(image) # Crear copia de la imagen sin procesarla
-        debug_image=procesar_emociones(debug_image)#Procesar caras y emociones
-        debug_image=procesar_gesto(image,debug_image)#Procesar gestos de manos
-        mostrar_info(debug_image)
-        cv.imshow('Trabajo Final', debug_image)
-    cam.release()
+        # 5) Voltear la imagen (efecto espejo), si lo deseas
+        frame = cv.flip(frame, 1)
+        debug_image = frame.copy()
+
+        # 6) DETECCIÓN DE ROSTROS
+        face_boxes = face_detector.detect_faces(frame)
+
+        # 7) CLASIFICACIÓN DE EMOCIONES para cada rostro
+        face_preds = emotion_classifier.predict_emotions(frame, face_boxes)
+
+        # 8) Dibujar resultados de rostros y emociones
+        for box, pred in zip(face_boxes, face_preds):
+            emotion_label, confidence = emotion_classifier.get_emotion_label(pred)
+            label_text = f"{emotion_label}: {confidence*100:.0f}%"
+            draw_face_box(debug_image, box, label=label_text, color=(0, 255, 0))
+
+        # 9) DETECCIÓN DE MANOS (MediaPipe)
+        results = hand_detector.detect_hands(frame)
+
+        # Procesar cada mano detectada
+        if results.multi_hand_landmarks:
+            for hand_landmarks, handedness in zip(
+                results.multi_hand_landmarks,
+                results.multi_handedness
+            ):
+                # a) Dibujar landmarks de la mano (opcional)
+                draw_hand_landmarks(debug_image, hand_landmarks)
+
+                # b) Convertir landmarks a lista normalizada, etc.
+                #    Estas funciones puedes definirlas en sign_classifier
+                #    o en tu hand_detection. Ejemplo:
+                landmark_list = hand_detector.get_landmark_list(debug_image, hand_landmarks)
+                processed_lms = sign_classifier.preprocess_landmarks(landmark_list)
+
+                # c) Clasificar la seña
+                index, precision = sign_classifier.predict_sign(processed_lms)
+                gesture_label = sign_classifier.get_class_label(index)
+
+                # d) Dibujar info de la mano (mano derecha/izquierda, letra, etc.)
+                mano_text = handedness.classification[0].label  # 'Left' o 'Right'
+                draw_hand_info(debug_image, hand_landmarks, mano_text, gesture_label)
+
+                # e) Mostrar la letra y su precisión en alguna parte de la pantalla
+                draw_text(debug_image, f"Letra: {gesture_label} ({precision:.2f})", pos=(10, 100))
+
+        # 10) Mensaje de salir
+        draw_text(debug_image, "Salir (ESC)", pos=(5, 20))
+
+        # 11) Mostrar resultado
+        cv.imshow("Trabajo Final", debug_image)
+
+        # 12) Salir con tecla ESC
+        key = cv.waitKey(10)
+        if key == 27:  # 27 = ESC
+            break
+
+    # Liberar recursos
+    cap.release()
     cv.destroyAllWindows()
 
-def procesar_emociones(debug_image):
-    (locs, preds) = predecir_emocion(debug_image)#Clasificar la emocion
-    # Para cada hallazgo se dibuja en la imagen el bounding box y la clase
-    for (box, pred) in zip(locs, preds):
-        (Xi, Yi, Xf, Yf) = box
-        (angry,disgust,fear,happy,neutral,sad,surprise) = pred
-        label = ''
-        # Se agrega la probabilidad en el label de la imagen
-        label = "{}: {:.0f}%".format(CLASES_EMOCIONES[np.argmax(pred)], max(angry,disgust,fear,happy,neutral,sad,surprise) * 100)
-
-        cv.rectangle(debug_image, (Xi, Yi-40), (Xf, Yi), (255,0,0), -1)
-        cv.putText(debug_image, label, (Xi+5, Yi-15),cv.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
-        cv.rectangle(debug_image, (Xi, Yi), (Xf, Yf), (255,0,0), 3)
-    return debug_image
-
-def predecir_emocion(frame):
-	# Construye la entrada para el modelo de deteccion de rostros utilizando un blob con redimension a 224x224 pixeles
-	blob = cv.dnn.blobFromImage(frame, 1.0, (224, 224),(104.0, 177.0, 123.0))
-
-	faceNet.setInput(blob)# Se indica la entrada para la red de deteccion de rostro
-	detections = faceNet.forward()
-
-	# Listas para guardar rostros, ubicaciones y predicciones
-	faces = []
-	locs = []
-	preds = []
-	
-	# Recorre cada una de las detecciones
-	for i in range(0, detections.shape[2]):
-		
-		# Se indica un umbral de 0.5 para la deteccion del rostro
-
-		if detections[0, 0, i, 2] > 0.5:
-			# Se ubica el frame de la cara detectada y se calculan las coordenadas de los bordes
-			marco = detections[0, 0, i, 3:7] * np.array([frame.shape[1], frame.shape[0], frame.shape[1], frame.shape[0]])
-			(Xi, Yi, Xf, Yf) = marco.astype("int")
-
-			# Valida las dimensiones del bounding box
-			if Xi < 0: Xi = 0
-			if Yi < 0: Yi = 0
-			
-			face = frame[Yi:Yf, Xi:Xf]#Se extrae del frame el rostro detectado
-			face = cv.cvtColor(face, cv.COLOR_BGR2GRAY)#Se convierte la imagen a escala de grises
-			face = cv.resize(face, (48, 48))#Se redimensiona la imagen a 224x224 pixeles
-			face2 = img_to_array(face)#Se convierte la imagen a un array
-			face2 = np.expand_dims(face2,axis=0)#Se expande la dimension del array para acoplarlo al shape de la entrada del modelo
-
-			faces.append(face2)#Se guarda la cara en la lista de caras
-			locs.append((Xi, Yi, Xf, Yf))#Se guarda la ubicacion de la cara en la lista de ubicaciones
-
-			pred = emocionesModel.predict(face2,verbose=0)#Se genera la prediccion de emocion
-			preds.append(pred[0])#Se guardan las predicciones
-
-	return (locs,preds)#Devuelve las ubicaciones y predicciones generadas
-
-def procesar_gesto(image,debug_image):
-    image = cv.cvtColor(image, cv.COLOR_BGR2RGB)#Convertir imagen a RGB
-    image.flags.writeable = False #Desactivar escritura de la imagen
-    results = hands.process(image) #Detectar manos y obtener sus puntos clave
-    image.flags.writeable = True #Activar escritura de la imagen
-    if results.multi_hand_landmarks is not None:#Si se detecta una mano
-        for hand_landmarks, handedness in zip(results.multi_hand_landmarks,results.multi_handedness):
-            # Calcular el borde de la mano
-            brect = calculo_borde(debug_image, hand_landmarks)
-            # Calculo de puntos clave de la mano
-            landmark_list = lista_landmark(debug_image, hand_landmarks)
-            # Conversion de datos a coordenadas relativas y normalizar
-            pre_processed_landmark_list = procesar_landmark(landmark_list)
-            # Clasificar la seña de la mano detectada 
-            #predictions = gestosModel.predict( np.array([pre_processed_landmark_list]) , verbose = 0 )
-            #index = np.argmax(np.squeeze(predictions))
-            #precision = np.squeeze(predictions)[index]
-            index,precision = gestosModel(pre_processed_landmark_list)
-            # Graficar resultados y caracteristicas
-            debug_image = dibujar_borde(True, debug_image, brect)
-            debug_image = dibujar_landmarks(debug_image, landmark_list)
-            debug_image = dibujar_info_borde(debug_image,brect, handedness,CLASES_GESTOS[index])
-            mostrar_resultado(debug_image,CLASES_GESTOS[index],precision)       
-    return debug_image
-
-def calculo_borde(image, landmarks):
-    # Obtiene el ancho y alto de la imagen
-    image_w, image_h = image.shape[1], image.shape[0]
-
-    # Crea un array vacío para almacenar las coordenadas de los landmarks
-    landmark_array = np.empty((0, 2), int)
-    
-    # Itera a través de los landmarks y calcula las coordenadas de cada landmark en píxeles en la imagen
-    for _, landmark in enumerate(landmarks.landmark):
-        landmark_x = min(int(landmark.x * image_w), image_w - 1)
-        landmark_y = min(int(landmark.y * image_h), image_h- 1)
-        landmark_punto = [np.array((landmark_x, landmark_y))]
-        landmark_array = np.append(landmark_array, landmark_punto, axis=0)
-    
-    # Utiliza la función "cv.boundingRect" para calcular el borde alrededor de los landmarks y obtener las coordenadas del rectángulo delimitador (x, y, w, h)
-    x, y, w, h = cv.boundingRect(landmark_array)
-    
-    # Devuelve las coordenadas del borde como una lista [x, y, x + w, y + h]
-    return [x, y, x + w, y + h]
-
-def lista_landmark(image, landmarks):
-    # Obtiene el ancho y alto de la imagen
-    image_width, image_height = image.shape[1], image.shape[0]
-    
-    # Crea una lista vacía para almacenar las coordenadas de los landmarks
-    landmark_point = []
-    
-    # Itera a través de los landmarks y calcula las coordenadas de cada landmark en píxeles en la imagen
-    for _, landmark in enumerate(landmarks.landmark):
-        landmark_x = min(int(landmark.x * image_width), image_width - 1)
-        landmark_y = min(int(landmark.y * image_height), image_height - 1)
-        landmark_point.append([landmark_x, landmark_y])
-    
-    # Devuelve la lista de coordenadas de los landmarks
-    return landmark_point
-
-def procesar_landmark(landmark_list):
-    # Realiza una copia profunda de la lista de landmarks
-    temp_landmark_list = copy.deepcopy(landmark_list)
-    
-    # Inicializa las coordenadas base
-    base_x, base_y = 0, 0
-    
-    # Itera a través de la lista de landmarks
-    for index, landmark_point in enumerate(temp_landmark_list):
-        # Si es el primer landmark, establece las coordenadas base
-        if index == 0:
-            base_x, base_y = landmark_point[0], landmark_point[1]
-        # Normaliza las coordenadas restando las coordenadas base
-        temp_landmark_list[index][0] = temp_landmark_list[index][0] - base_x
-        temp_landmark_list[index][1] = temp_landmark_list[index][1] - base_y
-
-    # Aplana la lista de landmarks
-    temp_landmark_list = list(itertools.chain.from_iterable(temp_landmark_list))
-    
-    # Calcula el valor máximo absoluto en la lista de landmarks
-    max_value = max(list(map(abs, temp_landmark_list)))
-
-    # Define una función para normalizar los valores
-    def normalize_(n):
-        return n / max_value
-
-    # Normaliza cada valor en la lista de landmarks
-    temp_landmark_list = list(map(normalize_, temp_landmark_list))
-    
-    # Devuelve la lista de landmarks normalizada
-    return temp_landmark_list
-
-def dibujar_landmarks(image, landmark_point):
-    if len(landmark_point) > 0:
-        # Pulgar
-        cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[3]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[3]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[3]), tuple(landmark_point[4]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[3]), tuple(landmark_point[4]),
-                (255, 255, 255), 2)
-
-        # Dedos
-        cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[6]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[6]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[6]), tuple(landmark_point[7]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[6]), tuple(landmark_point[7]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[7]), tuple(landmark_point[8]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[7]), tuple(landmark_point[8]),
-                (255, 255, 255), 2)
-
-        # Dedo del medio
-        cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[10]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[10]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[10]), tuple(landmark_point[11]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[10]), tuple(landmark_point[11]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[11]), tuple(landmark_point[12]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[11]), tuple(landmark_point[12]),
-                (255, 255, 255), 2)
-
-        # Dedo anular
-        cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[14]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[14]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[14]), tuple(landmark_point[15]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[14]), tuple(landmark_point[15]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[15]), tuple(landmark_point[16]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[15]), tuple(landmark_point[16]),
-                (255, 255, 255), 2)
-
-        # Meñique
-        cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[18]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[18]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[18]), tuple(landmark_point[19]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[18]), tuple(landmark_point[19]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[19]), tuple(landmark_point[20]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[19]), tuple(landmark_point[20]),
-                (255, 255, 255), 2)
-
-        # Palma
-        cv.line(image, tuple(landmark_point[0]), tuple(landmark_point[1]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[0]), tuple(landmark_point[1]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[1]), tuple(landmark_point[2]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[1]), tuple(landmark_point[2]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[5]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[2]), tuple(landmark_point[5]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[9]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[5]), tuple(landmark_point[9]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[13]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[9]), tuple(landmark_point[13]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[17]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[13]), tuple(landmark_point[17]),
-                (255, 255, 255), 2)
-        cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[0]),
-                (0, 0, 0), 6)
-        cv.line(image, tuple(landmark_point[17]), tuple(landmark_point[0]),
-                (255, 255, 255), 2)
-
-    # Puntos clave
-    for index, landmark in enumerate(landmark_point):
-        if index == 0: 
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 1:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 2:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 3:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 4:
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 5:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 6:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 7:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 8:
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 9:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 10:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 11:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 12:
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 13:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 14:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 15:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 16:
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-        if index == 17:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255), -1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 18:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 19:
-            cv.circle(image, (landmark[0], landmark[1]), 5, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 5, (0, 0, 0), 1)
-        if index == 20:
-            cv.circle(image, (landmark[0], landmark[1]), 8, (255, 255, 255),-1)
-            cv.circle(image, (landmark[0], landmark[1]), 8, (0, 0, 0), 1)
-
-    return image
-
-def dibujar_borde(use_brect, image, brect):
-    if use_brect:
-        cv.rectangle(image, (brect[0]+10, brect[1]-10), (brect[2]+10, brect[3]-10),(0, 0, 0), 1)
-    return image
-
-def mostrar_resultado(image,letra="",precision=""):
-    cv.rectangle(image, (5, 30), (200, 80),(0, 0, 0), -1)
-    cv.putText(image, "Letra: "+letra, (5, 50), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv.LINE_AA)
-    cv.putText(image, "Precision: " + str(precision), (5, 70), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv.LINE_AA)
-    return image
-
-def mostrar_info(image):
-    cv.rectangle(image, (5, 0), (200, 30),(0, 0, 0), -1)
-    cv.putText(image, "Salir (ESC)", (5, 20), cv.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv.LINE_AA)
-    return image
-
-def dibujar_info_borde(image, brect, handedness, hand_sign_text):
-    cv.rectangle(image, (brect[0], brect[1]), (brect[2], brect[1] - 22),(0, 0, 0), -1)
-    info_text = handedness.classification[0].label[0:]
-    if hand_sign_text != "":
-        info_text = "Mano: "+info_text + ' Letra: ' + str.upper(hand_sign_text)
-    cv.putText(image, info_text, (brect[0] + 5, brect[1] - 4),cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv.LINE_AA)
-    return image
-
-if __name__ == '__main__':
+# Para ejecutar el script como programa principal:
+if __name__ == "__main__":
     main()
