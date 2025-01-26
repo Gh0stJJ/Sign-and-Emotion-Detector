@@ -1,3 +1,5 @@
 *.pdf
 /logs
 /Data
+
+/__pycache__
