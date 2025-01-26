@@ -2,6 +2,7 @@
 import cv2 as cv
 import numpy as np
 import tensorflow as tf
+import time
 
 # Importamos nuestros módulos personalizados
 from detection.face_detection import FaceDetector
@@ -23,10 +24,27 @@ from config import (
     MIN_TRACKING_CONFIDENCE
 )
 
+
+# Constantes de estabilidad
+STABILITY_THRESHOLD = 0.75  # Tiempo minimo para confirmar un gesto
+REPEATED_FRAMES = 0.75  # Tiempo minimo para repetir un gesto
+
+
 def main():
     """
     Punto de entrada principal del proyecto.
     """
+    #Buffer de texto para la palabra
+
+    #Inicializamos el buffer de texto
+    buffer = ""
+    last_gesture_label = None
+
+    #Iniciamos contadores de estabilidad
+    current_gesture = None
+    gesture_start_time = 0.0
+    last_added_time = 0.0
+
     # 1) Configurar (opcional) uso de GPU para TensorFlow
     gpus = tf.config.experimental.list_physical_devices('GPU')
     if gpus:
@@ -100,6 +118,42 @@ def main():
                 index, precision = sign_classifier.predict_sign(processed_lms)
                 gesture_label = sign_classifier.get_class_label(index)
 
+    
+                #Estabilidad del gesto
+
+                if gesture_label != current_gesture:
+                    #Reiniciamos el contador de tiempo
+                    current_gesture = gesture_label
+                    gesture_start_time = time.time()
+                    last_added_time = 0.0 # Reseteamos el tiempo de la ultima letra
+
+                #Calcular cuanto ha estado el gesto estable
+                gesture_stability_time = time.time() - gesture_start_time
+
+
+                #Checar el tiempo de estabilidad
+                if gesture_stability_time > STABILITY_THRESHOLD:
+                    now = time.time()
+
+                    if (last_added_time == 0.0) or (now - last_added_time >= REPEATED_FRAMES):
+                        
+                        #Escribir la palabra en pantalla
+                        
+                        if gesture_label == "space":
+                            buffer += " "
+                        elif gesture_label == "delete":
+                            if len(buffer) > 0:
+                                buffer = buffer[:-1]
+                        else:
+                            buffer += gesture_label
+
+                        #Actualizamos el tiempo de la ultima letra
+                        last_added_time = now
+
+                        #Guardamos el ultimo gesto para evitar repeticiones
+                        last_gesture_label = gesture_label
+
+                    
                 # d) Dibujar info de la mano (mano derecha/izquierda, letra, etc.)
                 mano_text = handedness.classification[0].label  # 'Left' o 'Right'
                 draw_hand_info(debug_image, hand_landmarks, mano_text, gesture_label)
@@ -107,11 +161,18 @@ def main():
                 # e) Mostrar la letra y su precisión en alguna parte de la pantalla
                 draw_text(debug_image, f"Letra: {gesture_label} ({precision:.2f})", pos=(10, 100))
 
+        #  Mostrar buffer de texto
+        cv.rectangle(debug_image, (10, 10), (400, 60), (120,120,120), -1)
+
+        # (B) ESCRIBIR TEXTO ENCIMA DEL FONDO
+        cv.putText(debug_image, buffer, (20, 45),
+            cv.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,255), 2, cv.LINE_AA)
+
         # 10) Mensaje de salir
-        draw_text(debug_image, "Salir (ESC)", pos=(5, 20))
+        draw_text(debug_image, "Salir (Escape Key)", pos=(5, 20))
 
         # 11) Mostrar resultado
-        cv.imshow("Trabajo Final", debug_image)
+        cv.imshow("Sign and Emotion Detector 2.0", debug_image)
 
         # 12) Salir con tecla ESC
         key = cv.waitKey(10)
