@@ -80,7 +80,7 @@ def main():
             print("No se obtuvo frame de la cámara.")
             break
 
-        # 5) Voltear la imagen (efecto espejo), si lo deseas
+        # 5) Voltear la imagen 
         frame = cv.flip(frame, 1)
         debug_image = frame.copy()
 
